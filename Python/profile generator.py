@@ -44,24 +44,35 @@ Notes:
 
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 import os
+from fedex_ev_load import create_ev_load 
 
 # Set random seed for reproducible results
 np.random.seed(42)
 
+
+# ======= SCRIPT CONTROLS ======
 # Set load factor file name
-# load_pattern = "Fedex"
-load_pattern = "Broadacres"
+load_pattern = "Fedex"
+# load_pattern = "Broadacres"
 
 # Applied load factor multiplier
-peak_multiplier = 80 / 130
+# peak_multiplier = 80 / 130 # For Broadacres
+peak_multiplier = 1 
+
+YEAR = 2025
+
+NUM_CHARGERS = 20
+# ==============================
+
+
 
 
 def read_input_files(load_pattern="Default"):
     """Read the input CSV files from the input directory"""
-    input_dir = "./inputs"
-    pattern_dir = "./inputs/load factor patterns"
+    input_dir = "./Inputs"
+    pattern_dir = "./Inputs/load factor patterns"
 
     # Read monthly consumption data
     consumption_df = pd.read_csv(os.path.join(input_dir, "Monthly Consumption.csv"))
@@ -78,7 +89,7 @@ def read_input_files(load_pattern="Default"):
     return consumption_df, demand_df, load_pattern_df
 
 
-def generate_hourly_load_profile(year=2024, peak_multiplier=1):
+def generate_hourly_load_profile(year=2025, peak_multiplier=1):
     """Generate hourly load profile for the specified year"""
 
     # Read input data
@@ -166,7 +177,7 @@ def generate_hourly_load_profile(year=2024, peak_multiplier=1):
 
         # Calculate average hourly consumption for the month
         # Monthly consumption / (days in month * 24 hours)
-        avg_hourly_consumption = monthly_consumption / (days_in_month * 24)
+        # avg_hourly_consumption = monthly_consumption / (days_in_month * 24)
 
         # Calculate hourly load based on peak demand scaled by load pattern
         hourly_load = monthly_demand * load_factor * peak_multiplier
@@ -195,6 +206,11 @@ def generate_hourly_load_profile(year=2024, peak_multiplier=1):
 
     # Create DataFrame
     df = pd.DataFrame(results)
+    
+    # Add EV load
+    charger_df = create_ev_load(YEAR,NUM_CHARGERS)
+    df['charger_load'] = charger_df['ev_power']
+    df['combined_load'] = df['charger_load']+df['HourlyLoad_kW']
 
     # Calculate some summary statistics
     print(
@@ -214,7 +230,7 @@ def generate_hourly_load_profile(year=2024, peak_multiplier=1):
     )
 
     # Weekday vs Weekend statistics
-    print(f"\nWeekday vs Weekend Statistics:")
+    print("\nWeekday vs Weekend Statistics:")
     day_type_stats = (
         df.groupby("DayType")
         .agg(
@@ -255,7 +271,7 @@ def main():
     try:
         # Generate hourly load profile
         load_profile_df = generate_hourly_load_profile(
-            year=2025, peak_multiplier=peak_multiplier
+            YEAR, peak_multiplier=peak_multiplier
         )
 
         # Save to CSV
@@ -277,7 +293,7 @@ def main():
         )
 
         # Show variability examples
-        print(f"\nVariability Examples:")
+        print("\nVariability Examples:")
         sample_hours = load_profile_df.head(24)
         for i in range(0, 24, 6):
             row = sample_hours.iloc[i]
@@ -304,7 +320,7 @@ def main():
 
     except FileNotFoundError as e:
         print(
-            f"Error: Could not find input files. Please ensure the following files exist in './inputs/' directory:"
+            "Error: Could not find input files. Please ensure the following files exist in './inputs/' directory:"
         )
         print("Monthly Consumption.csv")
         print("Monthly Demand.csv")
@@ -318,3 +334,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# %%
