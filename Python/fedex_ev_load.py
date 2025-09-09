@@ -23,7 +23,7 @@ Returns:
 Example:
     df = create_ev_load(2025, 20)
     # Creates profile with 100 kW peak demand (20 chargers x 5 kW each)
-    # Active only weekdays 9pm-6am (hours 21-23, 0-5)
+    # Active only weekdays 9pm-6am (hours 22-23, 0-5)
 """
     
 from datetime import datetime
@@ -54,7 +54,7 @@ def create_ev_load(year=2025, num_chargers =20):
     power_chargers = num_chargers*5 # 5 kW chargers
     df['ev_power'] = power_chargers
     df.loc[(df['day_type']=="Weekend") ,"ev_power"] = 0 # no charging on weekends
-    df.loc[((df['hour']>=6) & (df['hour']<21)) ,"ev_power"] = 0 # no charging from 6am-9pm
+    df.loc[((df['hour']>=6) & (df['hour']<22)) ,"ev_power"] = 0 # no charging from 6am-9pm
 
     return df
 
@@ -68,7 +68,7 @@ if __name__ == "__main__":
     print('EV Charger load profile created successfully')
     
     weekend_sum = df.loc[df['day_type']=="Weekend","ev_power"].sum()
-    workday_sum = df.loc[((df['hour']>=6) & (df['hour']<21)) ,"ev_power"].sum()
+    workday_sum = df.loc[((df['hour']>=6) & (df['hour']<22)) ,"ev_power"].sum()
     charge_avg = df['ev_power'].max()
     
     if weekend_sum == 0 | workday_sum == 0:

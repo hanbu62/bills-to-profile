@@ -71,8 +71,8 @@ NUM_CHARGERS = 20
 
 def read_input_files(load_pattern="Default"):
     """Read the input CSV files from the input directory"""
-    input_dir = "./Inputs"
-    pattern_dir = "./Inputs/load factor patterns"
+    input_dir = "./inputs"
+    pattern_dir = "./inputs/load factor patterns"
 
     # Read monthly consumption data
     consumption_df = pd.read_csv(os.path.join(input_dir, "Monthly Consumption.csv"))
