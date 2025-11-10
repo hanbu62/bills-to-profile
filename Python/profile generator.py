@@ -1,72 +1,21 @@
-"""
-Hourly Load Profile Generator Based on Billing Data
-
-Updates:
-- 13/06/2025: Initial version with 2% random variability and reproducible seed.
-- 13/06/2025: Added load factor bounds (0.1 to 1.0) to ensure realistic values.
-- 24/06/2025: Added weekend vs weekday load factor differentiation.
-- 24/06/2025: Added load pattern selection
-
-##############################################################################
-
-This script generates an hourly load profile on monthly consumption, demand
-data, and daily load patterns. The script applies realistic variability and
-differentiates between weekday and weekend patterns.
-
-Steps performed:
-1. Load input data from CSV files in the './inputs/' directory:
-    - 'Monthly Consumption.csv': Monthly energy consumption (kWh)
-    - 'Monthly Demand.csv': Monthly peak demand (kW)
-    - Load factor pattern selected from './inputs/load factor patterns':
-        - 'Load pattern.csv': 24-hour load patterns with weekday and weekend
-            factors
-2. Generate hourly timestamps for the specified year
-3. Apply monthly consumption and demand values to each hour
-4. Apply daily load patterns with weekend/weekday differentiation
-5. Add 2% random variability to load factors (with reproducible seed=42)
-6. Ensure load factors remain within realistic bounds (0.1 to 1.0)
-7. Calculate hourly loads based on monthly peak demand scaled by load factors
-8. Export results to './outputs/hourly_load_profile.csv'
-
-Input CSV file formats:
-- Monthly Consumption.csv: Columns ['Month', 'Consumption']
-- Monthly Demand.csv: Columns ['Month', 'Demand']
-- Load pattern.csv: Columns ['Hour', 'WeekdayLoadFactor', 'WeekendLoadFactor']
-
-Notes:
-- Load factors represent the percentage of monthly peak demand for each hour
-- Weekend patterns typically show different consumption behaviors than weekdays
-- Random variability (±2%) simulates real-world load fluctuations
-- All power values are in kilowatts (kW) and energy values in kilowatt-hours (kWh)
-- The script uses reproducible randomness (seed=42) for consistent results
-- Output includes both base and adjusted load factors for analysis
-"""
-
 import pandas as pd
 import numpy as np
 from datetime import datetime
 import os
-from fedex_ev_load import create_ev_load 
 
 # Set random seed for reproducible results
 np.random.seed(42)
 
-
 # ======= SCRIPT CONTROLS ======
 # Set load factor file name
-load_pattern = "Fedex"
-# load_pattern = "Broadacres"
+LOAD_PATTERN = "Broadacres"
 
 # Applied load factor multiplier
 # peak_multiplier = 80 / 130 # For Broadacres
-peak_multiplier = 1 
-
+MD_MULTIPLIER = 1
 YEAR = 2025
-
-NUM_CHARGERS = 20
+BANDWIDTH = 0.05
 # ==============================
-
-
 
 
 def read_input_files(load_pattern="Default"):
@@ -89,29 +38,71 @@ def read_input_files(load_pattern="Default"):
     return consumption_df, demand_df, load_pattern_df
 
 
+
+
+def apply_monthly_consumption_multipliers(df):
+    """
+    Apply monthly multipliers to ensure hourly loads sum to monthly consumption.
+    
+    This post-processing step scales all hourly loads in each month so that
+    the total equals the target monthly consumption.
+    """
+    df_adjusted = df.copy()
+    consumption_dict = {}
+    
+    month_map = {
+        "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
+        "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12,
+    }
+    
+    # Build consumption dict from the original input
+    consumption_df, _, _ = read_input_files(LOAD_PATTERN)
+    
+    for _, row in consumption_df.iterrows():
+        month_num = month_map[row["Month"]]
+        consumption_dict[month_num] = row["Consumption"]
+    
+    # Apply monthly consumption multipliers
+    multipliers = []
+    for month in range(1, 13):
+        month_data = df_adjusted[df_adjusted["Month"] == month]
+        if len(month_data) == 0:
+            continue
+        
+        current_consumption = month_data["HourlyLoad_kW"].sum()
+        target_consumption = consumption_dict[month]
+        
+        if current_consumption > 0:
+            multiplier = target_consumption / current_consumption
+        else:
+            multiplier = 1.0
+        
+        multipliers.append({
+            "Month": month,
+            "MonthName": month_data.iloc[0]["MonthName"],
+            "TargetConsumption_kWh": target_consumption,
+            "CalculatedConsumption_kWh": round(current_consumption, 2),
+            "Multiplier": round(multiplier, 4),
+        })
+        
+        # Apply multiplier to all hours in this month
+        df_adjusted.loc[df_adjusted["Month"] == month, "HourlyLoad_kW"] = (
+            month_data["HourlyLoad_kW"] * multiplier
+        ).round(2)
+    
+    multipliers_df = pd.DataFrame(multipliers)
+    return df_adjusted, multipliers_df
+
 def generate_hourly_load_profile(year=2025, peak_multiplier=1):
     """Generate hourly load profile for the specified year"""
+    
+    consumption_df, demand_df, load_pattern_df = read_input_files(LOAD_PATTERN)
 
-    # Read input data
-    consumption_df, demand_df, load_pattern_df = read_input_files(load_pattern)
-
-    # Create month mapping
     month_map = {
-        "Jan": 1,
-        "Feb": 2,
-        "Mar": 3,
-        "Apr": 4,
-        "May": 5,
-        "Jun": 6,
-        "Jul": 7,
-        "Aug": 8,
-        "Sep": 9,
-        "Oct": 10,
-        "Nov": 11,
-        "Dec": 12,
+        "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
+        "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12,
     }
 
-    # Convert month names to numbers and create dictionaries
     consumption_dict = {}
     demand_dict = {}
 
@@ -123,7 +114,6 @@ def generate_hourly_load_profile(year=2025, peak_multiplier=1):
         month_num = month_map[row["Month"]]
         demand_dict[month_num] = row["Demand"]
 
-    # Create load pattern dictionaries for weekday and weekend
     weekday_load_pattern = dict(
         zip(load_pattern_df["Hour"], load_pattern_df["WeekdayLoadFactor"])
     )
@@ -160,24 +150,10 @@ def generate_hourly_load_profile(year=2025, peak_multiplier=1):
             day_type = "Weekday"
 
         # Apply random variability: ±2% of the base load factor
-        variability = np.random.normal(0, 0.02 * base_load_factor)
+        variability = np.random.normal(0, BANDWIDTH * base_load_factor)
         load_factor = max(
             0.1, min(1.0, base_load_factor + variability)
         )  # Ensure load factor stays between 10% and 100%
-
-        # Calculate days in month
-        if month == 2:  # February
-            days_in_month = (
-                29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28
-            )
-        elif month in [4, 6, 9, 11]:
-            days_in_month = 30
-        else:
-            days_in_month = 31
-
-        # Calculate average hourly consumption for the month
-        # Monthly consumption / (days in month * 24 hours)
-        # avg_hourly_consumption = monthly_consumption / (days_in_month * 24)
 
         # Calculate hourly load based on peak demand scaled by load pattern
         hourly_load = monthly_demand * load_factor * peak_multiplier
@@ -198,30 +174,43 @@ def generate_hourly_load_profile(year=2025, peak_multiplier=1):
                 "MonthlyConsumption_kWh": monthly_consumption,
                 "MonthlyDemand_kW": monthly_demand,
                 "HourlyLoad_kW": round(hourly_load, 2),
-                "HourlyConsumption_kWh": round(
-                    hourly_load, 2
-                ),  # For hourly data, kW = kWh
             }
         )
 
-    # Create DataFrame
     df = pd.DataFrame(results)
     
-    # Add EV load
-    charger_df = create_ev_load(YEAR,NUM_CHARGERS)
-    df['charger_load'] = charger_df['ev_power']
-    df['combined_load'] = df['charger_load']+df['HourlyLoad_kW']
+    # Scale each month's loads so peak matches input monthly demand
+    for month in range(1, 13):
+        month_mask = df["Month"] == month
+        month_data = df.loc[month_mask, "HourlyLoad_kW"]
+        
+        current_peak = month_data.max()
+        target_peak = demand_dict[month]
+        
+        if current_peak > 0:
+            scale_factor = target_peak / current_peak
+            df.loc[month_mask, "HourlyLoad_kW"] = (month_data * scale_factor).round(2)
+    
+    # Apply monthly consumption multipliers
+    df, multipliers_df = apply_monthly_consumption_multipliers(df)
+    # multipliers_df = pd.DataFrame({
+    #     "Month": range(1, 13),
+    #     "MonthName": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+    #     "TargetConsumption_kWh": [0] * 12,
+    #     "CalculatedConsumption_kWh": [0] * 12,
+    #     "Multiplier": [1.0] * 12,
+    # })
 
     # Calculate some summary statistics
     print(
         (
-            f"Load Profile Generated for selected {load_pattern} profile in"
-            f" {year} (with 2% random variability, seed=42)"
+            f"Load Profile Generated for selected {LOAD_PATTERN} profile in"
+            f" {year} (with {BANDWIDTH*100}% random variability, seed=42)"
         )
     )
-    print(f"Demand scaled by {peak_multiplier*100} %")
+    print(f"Demand scaled by {peak_multiplier*100:.0f}%")
     print(f"Total Hours: {len(df)}")
-    print(f"Total Consumption: {sum(df['HourlyLoad_kW'])}")
+    print(f"Total Consumption: {sum(df['HourlyLoad_kW']):.2f} kWh")
     print(f"Peak Load: {df['HourlyLoad_kW'].max():.2f} kW")
     print(f"Minimum Load: {df['HourlyLoad_kW'].min():.2f} kW")
     print(f"Average Load: {df['HourlyLoad_kW'].mean():.2f} kW")
@@ -242,12 +231,17 @@ def generate_hourly_load_profile(year=2025, peak_multiplier=1):
         .round(3)
     )
     print(day_type_stats)
+    
+    print("\nMonthly Verification (after consumption scaling):")
+    print(multipliers_df.to_string(index=False))
 
     # Verify monthly totals
-    print("\nMonthly Verification:")
+    print("\nMonthly Load Statistics:")
     monthly_summary = (
         df.groupby("Month")
-        .agg({"HourlyLoad_kW": ["max", "mean"], "HourlyConsumption_kWh": "sum"})
+        .agg({
+            "HourlyLoad_kW": ["max", "mean", "sum"]
+        })
         .round(2)
     )
 
@@ -271,7 +265,7 @@ def main():
     try:
         # Generate hourly load profile
         load_profile_df = generate_hourly_load_profile(
-            YEAR, peak_multiplier=peak_multiplier
+            YEAR, peak_multiplier=MD_MULTIPLIER
         )
 
         # Save to CSV
@@ -297,11 +291,11 @@ def main():
         sample_hours = load_profile_df.head(24)
         for i in range(0, 24, 6):
             row = sample_hours.iloc[i]
-            variability_loadfactor = (
+            variability_pct = (
                 (row["LoadFactor"] - row["BaseLoadFactor"]) / row["BaseLoadFactor"]
             ) * 100
             print(
-                f"Hour {row['Hour']:2d} ({row['DayType']}): Base={row['BaseLoadFactor']:.3f}, Actual={row['LoadFactor']:.4f} ({variability_loadfactor:+.1f}%)"
+                f"Hour {row['Hour']:2d} ({row['DayType']}): Base={row['BaseLoadFactor']:.3f}, Actual={row['LoadFactor']:.4f} ({variability_pct:+.1f}%)"
             )
 
         # Display peak load hours
@@ -325,7 +319,7 @@ def main():
         print("Monthly Consumption.csv")
         print("Monthly Demand.csv")
         print(
-            f"{load_pattern}.csv (with columns: Hour, WeekdayLoadFactor, WeekendLoadFactor)"
+            f"{LOAD_PATTERN}.csv (with columns: Hour, WeekdayLoadFactor, WeekendLoadFactor)"
         )
         print(f"Specific error: {e}")
     except Exception as e:

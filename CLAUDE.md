@@ -4,35 +4,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Python-based hourly load profile generator that creates realistic electrical load patterns from monthly billing data. The application processes monthly consumption and demand data along with daily load patterns to generate hour-by-hour load profiles with realistic variability.
+This is a Python-based hourly load profile generator that creates realistic electrical load patterns from monthly billing data. The application processes monthly consumption and demand data along with daily load patterns to generate hour-by-hour load profiles with realistic variability. It also includes functionality to add a complementary EV charging load profile.
 
 ## Architecture
 
-The project follows a simple single-script architecture with well-defined data flow:
+The project follows a dual-script architecture with well-defined data flow:
 
 1. **Input Processing** (`read_input_files()`): Reads CSV files from structured input directories
 2. **Profile Generation** (`generate_hourly_load_profile()`): Core algorithm that applies load patterns, variability, and scaling
-3. **Data Export** (`save_load_profile()`): Outputs processed hourly profiles to CSV
+3. **EV Load Generation** (`create_ev_load()`): Creates complementary EV charging load profile with FedEx-style restrictions
+4. **Data Export** (`save_load_profile()`): Outputs processed hourly profiles to CSV
 
 ### Key Components
 
-- **Main Script**: `Python/profile generator.py` - Contains all functionality in a single, well-documented file
+- **Main Script**: `Python/profile generator.py` - Main load profile generation with EV load integration
+- **EV Load Script**: `Python/fedex_ev_load.py` - Generates FedEx-style EV charging profile with weekday 9pm-6am restrictions
 - **Input Data Structure**:
-  - `Inputs/Monthly Consumption.csv` - Monthly energy consumption in kWh
-  - `Inputs/Monthly Demand.csv` - Monthly peak demand in kW  
-  - `Inputs/load factor patterns/*.csv` - 24-hour load patterns with weekday/weekend differentiation
-- **Output**: `Outputs/hourly_load_profile.csv` - Generated hourly load profile
+  - `inputs/Monthly Consumption.csv` - Monthly energy consumption in kWh
+  - `inputs/Monthly Demand.csv` - Monthly peak demand in kW  
+  - `inputs/load factor patterns/*.csv` - 24-hour load patterns with weekday/weekend differentiation
+- **Output**: `outputs/hourly_load_profile.csv` - Generated hourly load profile
 
 ### Load Pattern Selection
 
-The script supports multiple predefined load patterns located in `Inputs/load factor patterns/`:
-- Broadacres.csv (currently selected)
+The script supports multiple predefined load patterns located in `inputs/load factor patterns/`:
+- Broadacres.csv
 - Default.csv
-- Fedex.csv
+- Fedex.csv (currently selected)
 - Office.csv
 - Strip_Mall.csv
 
-Pattern selection is controlled by the `load_pattern` variable on line 55.
+Pattern selection is controlled by the `load_pattern` variable on line 57.
 
 ## Development Commands
 
@@ -53,13 +55,21 @@ pip install pandas numpy
 
 ## Configuration
 
-Key parameters can be modified directly in the script:
+Key parameters can be modified directly in `Python/profile generator.py`:
 
-- **Load Pattern**: Change `load_pattern` variable (line 55)
-- **Peak Multiplier**: Adjust `peak_multiplier` (line 58) to scale demand values
-- **Target Year**: Modify year parameter in `main()` function (line 258)
-- **Random Seed**: Fixed at 42 for reproducible results (line 51)
-- **Variability**: 2% random variability applied to load factors (line 152)
+- **Load Pattern**: Change `load_pattern` variable (line 57) - currently set to "Fedex"
+- **Peak Multiplier**: Adjust `peak_multiplier` (line 62) to scale demand values
+- **Target Year**: Modify `YEAR` constant (line 64) - currently set to 2025
+- **Number of EV Chargers**: Adjust `NUM_CHARGERS` constant (line 66) - currently set to 15
+- **Random Seed**: Fixed at 42 for reproducible results (line 52)
+- **Variability**: 2% random variability applied to load factors
+
+### EV Load Configuration
+
+EV charging parameters in `Python/fedex_ev_load.py`:
+- **Charging Schedule**: Weekdays only, 9pm-6am (hours 22-23, 0-5)
+- **Charger Power**: Each charger assumed to be 5 kW capacity
+- **Weekend Charging**: Disabled (no charging on weekends)
 
 ## Input File Formats
 
