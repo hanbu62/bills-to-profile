@@ -11,13 +11,11 @@ project_root = Path(__file__).parent.parent
 os.chdir(project_root)
 sys.path.insert(0, str(project_root / "python"))
 
-
-# Set random seed for reproducible results
 np.random.seed(42)
 
 # ======= SCRIPT CONTROLS ======
 # Set load factor file name
-LOAD_PATTERN = "laerskool-stellenbosch"
+LOAD_PATTERN = "jan-celliers"
 
 # Applied load factor multiplier
 # peak_multiplier = 80 / 130 # For Broadacres
@@ -35,7 +33,7 @@ def read_input_files(load_pattern="Default"):
     # Read monthly consumption data
     consumption_df = pd.read_csv(os.path.join(input_dir, "Monthly Consumption.csv"))
     consumption_df.columns = consumption_df.columns.str.strip()  # Remove whitespace
-    
+
     # Read monthly demand data
     demand_df = pd.read_csv(os.path.join(input_dir, "Monthly Demand.csv"))
     demand_df.columns = demand_df.columns.str.strip()  # Remove whitespace
@@ -50,40 +48,40 @@ def read_input_files(load_pattern="Default"):
 def apply_monthly_consumption_multipliers(df):
     """
     Apply monthly multipliers to ensure hourly loads sum to monthly consumption.
-    
+
     This post-processing step scales all hourly loads in each month so that
     the total equals the target monthly consumption.
     """
     df_adjusted = df.copy()
     consumption_dict = {}
-    
+
     month_map = {
         "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
         "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12,
     }
-    
+
     # Build consumption dict from the original input
     consumption_df, _, _ = read_input_files(LOAD_PATTERN)
-    
+
     for _, row in consumption_df.iterrows():
         month_num = month_map[row["Month"]]
         consumption_dict[month_num] = row["Consumption"]
-    
+
     # Apply monthly consumption multipliers
     multipliers = []
     for month in range(1, 13):
         month_data = df_adjusted[df_adjusted["Month"] == month]
         if len(month_data) == 0:
             continue
-        
+
         current_consumption = month_data["HourlyLoad_kW"].sum()
         target_consumption = consumption_dict[month]
-        
+
         if current_consumption > 0:
             multiplier = target_consumption / current_consumption
         else:
             multiplier = 1.0
-        
+
         multipliers.append({
             "Month": month,
             "MonthName": month_data.iloc[0]["MonthName"],
@@ -91,18 +89,18 @@ def apply_monthly_consumption_multipliers(df):
             "CalculatedConsumption_kWh": round(current_consumption, 2),
             "Multiplier": round(multiplier, 4),
         })
-        
+
         # Apply multiplier to all hours in this month
         df_adjusted.loc[df_adjusted["Month"] == month, "HourlyLoad_kW"] = (
             month_data["HourlyLoad_kW"] * multiplier
         ).round(2)
-    
+
     multipliers_df = pd.DataFrame(multipliers)
     return df_adjusted, multipliers_df
 
 def generate_hourly_load_profile(year=2025, peak_multiplier=1):
     """Generate hourly load profile for the specified year"""
-    
+    print(peak_multiplier)
     consumption_df, demand_df, load_pattern_df = read_input_files(LOAD_PATTERN)
 
     month_map = {
@@ -185,28 +183,28 @@ def generate_hourly_load_profile(year=2025, peak_multiplier=1):
         )
 
     df = pd.DataFrame(results)
-    
+
     # Scale each month's loads so peak matches input monthly demand
     for month in range(1, 13):
         month_mask = df["Month"] == month
         month_data = df.loc[month_mask, "HourlyLoad_kW"]
-        
+
         current_peak = month_data.max()
         target_peak = demand_dict[month]
-        
+
         if current_peak > 0:
             scale_factor = target_peak / current_peak
             df.loc[month_mask, "HourlyLoad_kW"] = (month_data * scale_factor).round(2)
-    
+
     # Apply monthly consumption multipliers
-    # df, multipliers_df = apply_monthly_consumption_multipliers(df)
-    multipliers_df = pd.DataFrame({
-        "Month": range(1, 13),
-        "MonthName": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
-        "TargetConsumption_kWh": [0] * 12,
-        "CalculatedConsumption_kWh": [0] * 12,
-        "Multiplier": [1.0] * 12,
-    })
+    df, multipliers_df = apply_monthly_consumption_multipliers(df)
+    # multipliers_df = pd.DataFrame({
+    #     "Month": range(1, 13),
+    #     "MonthName": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+    #     "TargetConsumption_kWh": [0] * 12,
+    #     "CalculatedConsumption_kWh": [0] * 12,
+    #     "Multiplier": [1.0] * 12,
+    # })
 
     # Calculate some summary statistics
     print(
@@ -238,7 +236,7 @@ def generate_hourly_load_profile(year=2025, peak_multiplier=1):
         .round(3)
     )
     print(day_type_stats)
-    
+
     print("\nMonthly Verification (after consumption scaling):")
     print(multipliers_df.to_string(index=False))
 
@@ -274,8 +272,8 @@ def main():
         load_profile_df = generate_hourly_load_profile(
             YEAR, peak_multiplier=MD_MULTIPLIER
         )
-        
-        
+
+
         # Save to CSV
         save_load_profile(load_profile_df)
 
@@ -332,7 +330,7 @@ def main():
         print(f"Specific error: {e}")
     except Exception as e:
         print(f"An error occurred: {e}")
-        
+
     return load_profile_df
 
 #%%
