@@ -114,7 +114,7 @@ def main():
     # Save to CSV
     os.makedirs("./outputs", exist_ok=True)
     df.to_csv("./outputs/load_profile_debug.csv", index=False)
-    print(f"Debug dataframe saved to: ./outputs/load_profile_debug.csv")
+    print("Debug dataframe saved to: ./outputs/load_profile_debug.csv")
     
     # Print sample rows
     print("\nFirst 24 hours:")
