@@ -15,10 +15,9 @@ np.random.seed(42)
 
 # ======= SCRIPT CONTROLS ======
 # Set load factor file name
-LOAD_PATTERN = "jan-celliers"
+LOAD_PATTERN = "Abagold"
 
 # Applied load factor multiplier
-# peak_multiplier = 80 / 130 # For Broadacres
 MD_MULTIPLIER = 1
 YEAR = 2025
 BANDWIDTH = 0.1
@@ -264,6 +263,53 @@ def save_load_profile(df, filename="./outputs/hourly_load_profile.csv"):
     df.to_csv(filename, index=False)
     print(f"\nLoad profile saved to: {filename}")
 
+#TODO: create function that calculates monthly TOU split (need to include ToU schedule).
+# This can be compared to input data and used to improve load factors.
+
+def enrich_data(df):
+    df = df.copy()
+
+    tou_df = pd.read_csv('./inputs/time_of_use_25-26.csv')
+    df.loc[df["DayOfWeek"] == 5, "DayType"] = "Sat"
+    df.loc[df["DayOfWeek"] == 6, "DayType"] = "Sun"
+
+    month_season_map = {
+        1: "low",
+        2: "low",
+        3: "low",
+        4: "low",
+        5: "low",
+        6: "high",
+        7: "high",
+        8: "high",
+        9: "low",
+        10: "low",
+        11: "low",
+        12: "low",
+    }
+
+    df['season'] = df['Month'].map(month_season_map)
+    df['time'] = df['DateTime'].dt.strftime('%H:%M')
+    df_merged = df.merge(tou_df, on=['season','DayType', 'time'], how='left')
+
+    return df_merged
+
+def calculate_time_of_use_ratios(df):
+    data = df.copy()
+    data = enrich_data(data)
+
+    result = data.groupby(['Month', 'TOU'])['HourlyLoad_kW'].sum().reset_index()
+    result = result.pivot(index = 'Month', columns = 'TOU', values = 'HourlyLoad_kW')
+    result['total'] = result['OP'] + result['PK'] + result['STD']
+    result['pk_pct'] = result['PK'] / result['total']
+    result['op_pct'] = result['OP'] / result['total']
+    result['std_pct'] = result['STD'] / result['total']
+
+    return result
+
+    # import schedule -> see broadacres for reference
+    # enrich load profile (add season, day type)
+    # group data per month and time of use period
 
 def main():
     """Main function to generate and save the hourly load profile"""
@@ -273,9 +319,14 @@ def main():
             YEAR, peak_multiplier=MD_MULTIPLIER
         )
 
-
-        # Save to CSV
         save_load_profile(load_profile_df)
+
+        enrich_data(load_profile_df).to_csv('./outputs/enriched_load_profile.csv')
+
+        tou_summary = calculate_time_of_use_ratios(load_profile_df)
+        tou_summary.to_csv('./outputs/tou_summary.csv')
+
+
 
         # Display first few rows
         print("\nFirst 24 hours of load profile:")
