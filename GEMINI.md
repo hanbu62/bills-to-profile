@@ -17,7 +17,7 @@ The project follows a simple single-script architecture with well-defined data f
 
 ### Key Components
 
--   **Main Script**: `Python/profile generator.py` - Contains all functionality in a single, well-documented file
+-   **Main Script**: `python/profile_generator.py` - Contains all functionality in a single, well-documented file
 -   **EV Load Script**: `Python/fedex_ev_load.py` - Generates the EV charging load profile.
 -   **Input Data Structure**:
     -   `Inputs/Monthly Consumption.csv` - Monthly energy consumption in kWh
@@ -34,14 +34,16 @@ The script supports multiple predefined load patterns located in `Inputs/load fa
 -   Office.csv
 -   Strip_Mall.csv
 
-Pattern selection is controlled by the `load_pattern` variable in `Python/profile generator.py`.
+Pattern selection is controlled by the `LOAD_PATTERN` variable in `python/profile_generator.py`.
 
 ## Development Commands
 
 ### Running the Application
 
 ```bash
-python "Python/profile generator.py"
+python run.py
+# or directly:
+python python/profile_generator.py
 ```
 
 ### Dependencies
@@ -58,9 +60,9 @@ pip install pandas numpy
 
 ## Configuration
 
-Key parameters can be modified directly in the `Python/profile generator.py` script:
+Key parameters can be modified directly in the `python/profile_generator.py` script:
 
--   **Load Pattern**: Change `load_pattern` variable
+-   **Load Pattern**: Change `LOAD_PATTERN` variable
 -   **Peak Multiplier**: Adjust `peak_multiplier` to scale demand values
 -   **Target Year**: Modify `YEAR` variable
 -   **Number of EV Chargers**: Modify `NUM_CHARGERS` variable

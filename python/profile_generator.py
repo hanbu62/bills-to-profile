@@ -15,12 +15,16 @@ np.random.seed(42)
 
 # ======= SCRIPT CONTROLS ======
 # Set load factor file name
-LOAD_PATTERN = "Abagold"
+LOAD_PATTERN = "strip_mall"
 
 # Applied load factor multiplier
 MD_MULTIPLIER = 1
 YEAR = 2025
 BANDWIDTH = 0.1
+
+# "simple" uses MAX_DEMAND only; "advanced" uses monthly CSV data
+MODE = "advanced"
+MAX_DEMAND = 100        # kW — used only in simple mode
 # ==============================
 
 
@@ -99,7 +103,6 @@ def apply_monthly_consumption_multipliers(df):
 
 def generate_hourly_load_profile(year=2025, peak_multiplier=1):
     """Generate hourly load profile for the specified year"""
-    print(peak_multiplier)
     consumption_df, demand_df, load_pattern_df = read_input_files(LOAD_PATTERN)
 
     month_map = {
@@ -255,6 +258,7 @@ def generate_hourly_load_profile(year=2025, peak_multiplier=1):
     return df
 
 
+
 def save_load_profile(df, filename="./outputs/hourly_load_profile.csv"):
     """Save the load profile to a CSV file"""
     # Ensure output directory exists
@@ -262,9 +266,6 @@ def save_load_profile(df, filename="./outputs/hourly_load_profile.csv"):
 
     df.to_csv(filename, index=False)
     print(f"\nLoad profile saved to: {filename}")
-
-#TODO: create function that calculates monthly TOU split (need to include ToU schedule).
-# This can be compared to input data and used to improve load factors.
 
 def enrich_data(df):
     df = df.copy()
@@ -307,23 +308,123 @@ def calculate_time_of_use_ratios(df):
 
     return result
 
-    # import schedule -> see broadacres for reference
-    # enrich load profile (add season, day type)
-    # group data per month and time of use period
+def generate_simple_load_profile(max_demand, year=2025):
+    """Generate hourly load profile from a single max demand value and a load pattern."""
+    pattern_dir = "./inputs/load factor patterns"
+    load_pattern_df = pd.read_csv(os.path.join(pattern_dir, f"{LOAD_PATTERN}.csv"))
+    load_pattern_df.columns = load_pattern_df.columns.str.strip()
+
+    weekday_load_pattern = dict(zip(load_pattern_df["Hour"], load_pattern_df["WeekdayLoadFactor"]))
+    weekend_load_pattern = dict(zip(load_pattern_df["Hour"], load_pattern_df["WeekendLoadFactor"]))
+
+    start_date = datetime(year, 1, 1)
+    end_date = datetime(year + 1, 1, 1)
+    date_range = pd.date_range(start=start_date, end=end_date, freq="h", inclusive="left")
+
+    results = []
+    for dt in date_range:
+        hour = dt.hour
+        day_of_week = dt.weekday()
+        is_weekend = day_of_week >= 5
+
+        if is_weekend:
+            base_load_factor = weekend_load_pattern[hour]
+            day_type = "Weekend"
+        else:
+            base_load_factor = weekday_load_pattern[hour]
+            day_type = "Weekday"
+
+        variability = np.random.normal(0, BANDWIDTH * base_load_factor)
+        load_factor = max(0.1, min(1.0, base_load_factor + variability))
+        hourly_load = max_demand * load_factor
+
+        results.append({
+            "DateTime": dt,
+            "Year": dt.year,
+            "Month": dt.month,
+            "Day": dt.day,
+            "Hour": dt.hour,
+            "DayOfWeek": day_of_week,
+            "DayType": day_type,
+            "MonthName": dt.strftime("%b"),
+            "BaseLoadFactor": base_load_factor,
+            "LoadFactor": round(load_factor, 4),
+            "MonthlyConsumption_kWh": 0,
+            "MonthlyDemand_kW": max_demand,
+            "HourlyLoad_kW": round(hourly_load, 2),
+        })
+
+    df = pd.DataFrame(results)
+
+    print(f"Simple Load Profile Generated for {LOAD_PATTERN} pattern in {year}")
+    print(f"Max Demand: {max_demand:.0f} kW  |  Bandwidth: {BANDWIDTH*100:.0f}%  |  seed=42")
+    print(f"Total Hours: {len(df)}")
+    print(f"Total Consumption: {df['HourlyLoad_kW'].sum():.2f} kWh")
+    print(f"Peak Load: {df['HourlyLoad_kW'].max():.2f} kW")
+    print(f"Minimum Load: {df['HourlyLoad_kW'].min():.2f} kW")
+    print(f"Average Load: {df['HourlyLoad_kW'].mean():.2f} kW")
+
+    return df
+
+
+def plot_weekly_comparison(df):
+    """Plot one representative week in summer (Jan) and winter (Jul) on the same axis."""
+    import matplotlib.pyplot as plt
+
+    # DayOfWeek 6 = Sunday (pandas Monday=0 convention)
+    summer_start = df[(df["Month"] == 1) & (df["DayOfWeek"] == 6)]["DateTime"].iloc[0]
+    winter_start = df[(df["Month"] == 7) & (df["DayOfWeek"] == 6)]["DateTime"].iloc[0]
+
+    summer_week = df[
+        (df["DateTime"] >= summer_start) &
+        (df["DateTime"] < summer_start + pd.Timedelta(days=7))
+    ]["HourlyLoad_kW"].values
+
+    winter_week = df[
+        (df["DateTime"] >= winter_start) &
+        (df["DateTime"] < winter_start + pd.Timedelta(days=7))
+    ]["HourlyLoad_kW"].values
+
+    hours = range(len(summer_week))
+    day_labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+
+    fig, ax = plt.subplots(figsize=(14, 5))
+    ax.plot(hours, winter_week, color="steelblue", label="Winter (Jul)", linewidth=1.5)
+    ax.plot(hours, summer_week, color="darkorange", label="Summer (Jan)", linewidth=1.5)
+
+    for d in range(7):
+        ax.axvline(x=d * 24, color="gray", linestyle="--", linewidth=0.5, alpha=0.4)
+
+    ax.set_xticks([d * 24 + 12 for d in range(7)])
+    ax.set_xticklabels(day_labels)
+    ax.set_ylabel("Load (kW)")
+    ax.set_title(f"Weekly Load Profile — {LOAD_PATTERN}")
+    ax.legend()
+    ax.grid(True, axis="y", alpha=0.3)
+    plt.tight_layout()
+
+    output_path = "./outputs/weekly_comparison.png"
+    plt.savefig(output_path, dpi=150)
+    print(f"Weekly comparison chart saved to {output_path}")
+    plt.show()
+
 
 def main():
     """Main function to generate and save the hourly load profile"""
     try:
-        # Generate hourly load profile
-        load_profile_df = generate_hourly_load_profile(
-            YEAR, peak_multiplier=MD_MULTIPLIER
-        )
+        if MODE == "simple":
+            load_profile_df = generate_simple_load_profile(MAX_DEMAND, YEAR)
+        else:
+            load_profile_df = generate_hourly_load_profile(
+                YEAR, peak_multiplier=MD_MULTIPLIER
+            )
 
         save_load_profile(load_profile_df)
 
         enrich_data(load_profile_df).to_csv('./outputs/enriched_load_profile.csv')
 
         tou_summary = calculate_time_of_use_ratios(load_profile_df)
+        print(tou_summary.sum(numeric_only=True))
         tou_summary.to_csv('./outputs/tou_summary.csv')
 
 
