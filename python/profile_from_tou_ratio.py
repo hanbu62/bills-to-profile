@@ -41,9 +41,9 @@ time_of_use_25-26.csv
     ...    (DayType values: Weekday / Sat / Sun)
 
 Abagold.csv  (base profile)
-    Hour, WeekdayLoadFactor, WeekendLoadFactor
-    0, 0.85, 0.85
-    1, 0.85, 0.85
+    Hour, WeekdayLoadFactor, SaturdayLoadFactor, SundayLoadFactor
+    0, 0.85, 0.85, 0.85
+    1, 0.85, 0.85, 0.85
     ...
 """
 
@@ -92,7 +92,9 @@ def fit_load_profile(
         TOU: 'PK', 'STD', or 'OP'.
     base_profile_path : str
         Path to CSV with columns ['Hour', 'WeekdayLoadFactor',
-        'WeekendLoadFactor'].  24 rows (Hour 0–23).
+        'SaturdayLoadFactor', 'SundayLoadFactor'].  24 rows (Hour 0–23).
+        Old-format files with 'WeekendLoadFactor' are also accepted — Saturday
+        and Sunday will share the same base load factors.
     season_weights : dict, optional
         Relative weight for each season, e.g. {'low': 0.5, 'high': 0.5}.
         Defaults to equal weighting across all seasons found in the schedule.
@@ -107,7 +109,7 @@ def fit_load_profile(
     Returns
     -------
     pd.DataFrame
-        Columns: ['Hour', 'WeekdayLoadFactor', 'WeekendLoadFactor']
+        Columns: ['Hour', 'WeekdayLoadFactor', 'SaturdayLoadFactor', 'SundayLoadFactor']
         24 rows, values rounded to 4 decimal places.
 
     Raises
@@ -130,14 +132,11 @@ def fit_load_profile(
     schedule = pd.read_csv(tou_schedule_path)
     _require_cols(schedule, ["season", "DayType", "time", "TOU"], tou_schedule_path)
     schedule["hour"] = schedule["time"].str[:2].astype(int)
-    schedule["day_category"] = schedule["DayType"].map(
-        {"Weekday": "Weekday", "Sat": "Weekend", "Sun": "Weekend"}
-    )
 
     base = pd.read_csv(base_profile_path)
-    _require_cols(base, ["Hour", "WeekdayLoadFactor", "WeekendLoadFactor"],
-                  base_profile_path)
+    _require_cols(base, ["Hour", "WeekdayLoadFactor"], base_profile_path)
     base = base.set_index("Hour")
+    has_sat_sun = "SaturdayLoadFactor" in base.columns
 
     # ── 2. Normalise weights ───────────────────────────────────────────────────
     seasons = list(schedule["season"].unique())
@@ -146,30 +145,38 @@ def fit_load_profile(
     season_weights = _normalise(season_weights)
 
     if day_weights is None:
-        day_weights = {"Weekday": 5, "Weekend": 2}
+        day_weights = {"Weekday": 5, "Sat": 1, "Sun": 1}
     day_weights = _normalise(day_weights)
 
     # ── 3. Build effective TOU weight matrices ─────────────────────────────────
     # eff_X[h][b]  = fraction of energy at hour h attributed to band b,
-    #                after averaging across seasons (and Sat/Sun sub-types).
-    eff_wd = _effective_tou(schedule, "Weekday", season_weights, BANDS)
-    eff_we = _effective_tou(schedule, "Weekend", season_weights, BANDS)
+    #                after averaging across seasons.
+    eff_wd  = _effective_tou(schedule, "Weekday", season_weights, BANDS)
+    eff_sat = _effective_tou(schedule, "Sat",     season_weights, BANDS)
+    eff_sun = _effective_tou(schedule, "Sun",     season_weights, BANDS)
 
     # ── 4. Optimise three scale factors ───────────────────────────────────────
     base_wd = base["WeekdayLoadFactor"].values.copy()
-    base_we = base["WeekendLoadFactor"].values.copy()
+    if has_sat_sun:
+        base_sat = base["SaturdayLoadFactor"].values.copy()
+        base_sun = base["SundayLoadFactor"].values.copy()
+    else:
+        base_sat = base["WeekendLoadFactor"].values.copy()
+        base_sun = base_sat
 
     def _fractions(x: np.ndarray) -> dict[str, float]:
         """Compute combined weekly TOU fractions for scale vector x."""
         scales = dict(zip(BANDS, x))
-        lf_wd = _apply_scales(base_wd, eff_wd, scales, BANDS)
-        lf_we = _apply_scales(base_we, eff_we, scales, BANDS)
+        lf_wd  = _apply_scales(base_wd,  eff_wd,  scales, BANDS)
+        lf_sat = _apply_scales(base_sat, eff_sat, scales, BANDS)
+        lf_sun = _apply_scales(base_sun, eff_sun, scales, BANDS)
         energy = {b: 0.0 for b in BANDS}
         total = 0.0
         for h in range(24):
             for b in BANDS:
-                e = (day_weights["Weekday"] * lf_wd[h] * eff_wd[h][b]
-                     + day_weights["Weekend"] * lf_we[h] * eff_we[h][b])
+                e = (day_weights["Weekday"] * lf_wd[h]  * eff_wd[h][b]
+                     + day_weights["Sat"]   * lf_sat[h] * eff_sat[h][b]
+                     + day_weights["Sun"]   * lf_sun[h] * eff_sun[h][b])
                 energy[b] += e
                 total += e
         return {b: energy[b] / total for b in BANDS}
@@ -189,8 +196,9 @@ def fit_load_profile(
     )
 
     opt_scales = dict(zip(BANDS, result.x))
-    lf_wd_new = _apply_scales(base_wd, eff_wd, opt_scales, BANDS)
-    lf_we_new = _apply_scales(base_we, eff_we, opt_scales, BANDS)
+    lf_wd_new  = _apply_scales(base_wd,  eff_wd,  opt_scales, BANDS)
+    lf_sat_new = _apply_scales(base_sat, eff_sat, opt_scales, BANDS)
+    lf_sun_new = _apply_scales(base_sun, eff_sun, opt_scales, BANDS)
     achieved = _fractions(result.x)
 
     # ── 5. Diagnostics ─────────────────────────────────────────────────────────
@@ -207,8 +215,9 @@ def fit_load_profile(
     # ── 6. Assemble output ─────────────────────────────────────────────────────
     out = pd.DataFrame({
         "Hour": range(24),
-        "WeekdayLoadFactor": np.round(lf_wd_new, 4),
-        "WeekendLoadFactor": np.round(lf_we_new, 4),
+        "WeekdayLoadFactor":  np.round(lf_wd_new,  4),
+        "SaturdayLoadFactor": np.round(lf_sat_new, 4),
+        "SundayLoadFactor":   np.round(lf_sun_new, 4),
     })
 
     if output_path:
@@ -235,14 +244,14 @@ def _normalise(d: dict) -> dict:
 
 def _effective_tou(
     schedule: pd.DataFrame,
-    day_cat: str,
+    day_type: str,
     season_weights: dict,
     bands: list[str],
 ) -> list[dict[str, float]]:
     """
     For each of the 24 hours, return the fraction of energy attributable
-    to each TOU band, after averaging across seasons (and across multiple
-    DayType rows that map to the same day_category, e.g. Sat + Sun).
+    to each TOU band, after averaging across seasons.
+    day_type must match DayType values in the schedule: 'Weekday', 'Sat', or 'Sun'.
     """
     eff = []
     for h in range(24):
@@ -250,14 +259,13 @@ def _effective_tou(
         for season, sw in season_weights.items():
             rows = schedule[
                 (schedule["season"] == season)
-                & (schedule["day_category"] == day_cat)
+                & (schedule["DayType"] == day_type)
                 & (schedule["hour"] == h)
             ]
             if rows.empty:
                 continue
-            n = len(rows)
             for _, row in rows.iterrows():
-                bw[row["TOU"]] += sw / n
+                bw[row["TOU"]] += sw
         eff.append(bw)
     return eff
 

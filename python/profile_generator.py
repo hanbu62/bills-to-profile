@@ -124,9 +124,18 @@ def generate_hourly_load_profile(year=2025, peak_multiplier=1):
     weekday_load_pattern = dict(
         zip(load_pattern_df["Hour"], load_pattern_df["WeekdayLoadFactor"])
     )
-    weekend_load_pattern = dict(
-        zip(load_pattern_df["Hour"], load_pattern_df["WeekendLoadFactor"])
-    )
+    if "SaturdayLoadFactor" in load_pattern_df.columns:
+        saturday_load_pattern = dict(
+            zip(load_pattern_df["Hour"], load_pattern_df["SaturdayLoadFactor"])
+        )
+        sunday_load_pattern = dict(
+            zip(load_pattern_df["Hour"], load_pattern_df["SundayLoadFactor"])
+        )
+    else:
+        saturday_load_pattern = dict(
+            zip(load_pattern_df["Hour"], load_pattern_df["WeekendLoadFactor"])
+        )
+        sunday_load_pattern = saturday_load_pattern
 
     # Generate date range for the year
     start_date = datetime(year, 1, 1)
@@ -142,16 +151,18 @@ def generate_hourly_load_profile(year=2025, peak_multiplier=1):
         month = dt.month
         hour = dt.hour
         day_of_week = dt.weekday()  # Monday=0, Sunday=6
-        is_weekend = day_of_week >= 5  # Saturday=5, Sunday=6
 
         # Get monthly values
         monthly_consumption = consumption_dict[month]  # kWh for the month
         monthly_demand = demand_dict[month]  # kW peak demand
 
-        # Get hourly load factor based on weekday/weekend
-        if is_weekend:
-            base_load_factor = weekend_load_pattern[hour]
-            day_type = "Weekend"
+        # Get hourly load factor based on day type
+        if day_of_week == 5:
+            base_load_factor = saturday_load_pattern[hour]
+            day_type = "Sat"
+        elif day_of_week == 6:
+            base_load_factor = sunday_load_pattern[hour]
+            day_type = "Sun"
         else:
             base_load_factor = weekday_load_pattern[hour]
             day_type = "Weekday"
@@ -315,7 +326,12 @@ def generate_simple_load_profile(max_demand, year=2025):
     load_pattern_df.columns = load_pattern_df.columns.str.strip()
 
     weekday_load_pattern = dict(zip(load_pattern_df["Hour"], load_pattern_df["WeekdayLoadFactor"]))
-    weekend_load_pattern = dict(zip(load_pattern_df["Hour"], load_pattern_df["WeekendLoadFactor"]))
+    if "SaturdayLoadFactor" in load_pattern_df.columns:
+        saturday_load_pattern = dict(zip(load_pattern_df["Hour"], load_pattern_df["SaturdayLoadFactor"]))
+        sunday_load_pattern   = dict(zip(load_pattern_df["Hour"], load_pattern_df["SundayLoadFactor"]))
+    else:
+        saturday_load_pattern = dict(zip(load_pattern_df["Hour"], load_pattern_df["WeekendLoadFactor"]))
+        sunday_load_pattern   = saturday_load_pattern
 
     start_date = datetime(year, 1, 1)
     end_date = datetime(year + 1, 1, 1)
@@ -325,11 +341,13 @@ def generate_simple_load_profile(max_demand, year=2025):
     for dt in date_range:
         hour = dt.hour
         day_of_week = dt.weekday()
-        is_weekend = day_of_week >= 5
 
-        if is_weekend:
-            base_load_factor = weekend_load_pattern[hour]
-            day_type = "Weekend"
+        if day_of_week == 5:
+            base_load_factor = saturday_load_pattern[hour]
+            day_type = "Sat"
+        elif day_of_week == 6:
+            base_load_factor = sunday_load_pattern[hour]
+            day_type = "Sun"
         else:
             base_load_factor = weekday_load_pattern[hour]
             day_type = "Weekday"
@@ -477,7 +495,7 @@ def main():
         print("Monthly Consumption.csv")
         print("Monthly Demand.csv")
         print(
-            f"{LOAD_PATTERN}.csv (with columns: Hour, WeekdayLoadFactor, WeekendLoadFactor)"
+            f"{LOAD_PATTERN}.csv (with columns: Hour, WeekdayLoadFactor, SaturdayLoadFactor, SundayLoadFactor)"
         )
         print(f"Specific error: {e}")
     except Exception as e:

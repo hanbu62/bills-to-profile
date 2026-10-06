@@ -2,6 +2,7 @@
 import os
 import sys
 from pathlib import Path
+import pandas as pd
 
 project_root = Path(__file__).parent
 os.chdir(project_root)
@@ -17,22 +18,95 @@ def list_patterns():
     return sorted(p.stem for p in pattern_dir.glob("*.csv"))
 
 
-def prompt_pattern(patterns):
-    print("\nAvailable load patterns:")
+def prompt_pattern(patterns, tou_option=False, label="Available load patterns:"):
+    print(f"\n{label}")
     print("-" * WIDTH)
+    if tou_option:
+        print(f"    0. [Generate new profile from TOU ratios]")
     for i, name in enumerate(patterns, 1):
         print(f"  {i:3d}. {name}")
     print("-" * WIDTH)
     n = len(patterns)
+    lo = 0 if tou_option else 1
     while True:
-        raw = input(f"Select pattern [1-{n}]: ").strip()
+        raw = input(f"Select pattern [{lo}-{n}]: ").strip()
         try:
             val = int(raw)
+            if tou_option and val == 0:
+                return None
             if 1 <= val <= n:
                 return patterns[val - 1]
         except ValueError:
             pass
-        print(f"  Please enter a number between 1 and {n}.")
+        print(f"  Please enter a number between {lo} and {n}.")
+
+
+def run_tou_fit(patterns):
+    print("\n--- Generate Profile from TOU Ratios ---")
+    base = prompt_pattern(patterns, label="Select base pattern to fit:")
+
+    default_name = f"fitted_{base}"
+    raw = input(f"\n  Output profile name [{default_name}]: ").strip()
+    output_name = raw if raw else default_name
+
+    ratios_path   = str(project_root / "inputs" / "time_of_use_ratios.csv")
+    schedule_path = str(project_root / "inputs" / "time_of_use_25-26.csv")
+    base_path     = str(project_root / "inputs" / "load factor patterns" / f"{base}.csv")
+    output_path   = str(project_root / "inputs" / "load factor patterns" / f"{output_name}.csv")
+
+    print("\n" + "=" * WIDTH)
+
+    import profile_from_tou_ratio as fitter
+    fitter.fit_load_profile(
+        tou_ratios_path=ratios_path,
+        tou_schedule_path=schedule_path,
+        base_profile_path=base_path,
+        output_path=output_path,
+        verbose=True,
+    )
+
+    print("=" * WIDTH)
+    raw = input(f"\nContinue to generate hourly profile with '{output_name}'? [Y/n]: ").strip().lower()
+    if raw in ("", "y"):
+        return output_name
+    return None
+
+
+def check_pattern_format(pattern):
+    """Return (possibly updated) pattern name after checking for Sat/Sun columns."""
+    path = project_root / "inputs" / "load factor patterns" / f"{pattern}.csv"
+    df = pd.read_csv(path)
+    if "SaturdayLoadFactor" in df.columns:
+        return pattern
+
+    print(f"\nPattern '{pattern}' uses a single WeekendLoadFactor for both Saturday and Sunday.")
+    print("The TOU schedule distinguishes them — separate factors give more accurate results.")
+    print()
+    print("  [1] Generate a new Sat/Sun profile  (saves a new CSV, uses it for this run)")
+    print("  [2] Use as-is                        (Saturday and Sunday share the same factors)")
+
+    while True:
+        raw = input("\nYour choice [1/2]: ").strip()
+        if raw == "1":
+            break
+        if raw == "2":
+            return pattern
+        print("  Please enter 1 or 2.")
+
+    default_name = f"{pattern}_sat_sun"
+    raw = input(f"\n  Output profile name [{default_name}]: ").strip()
+    output_name = raw if raw else default_name
+
+    new_df = df.copy()
+    new_df["SaturdayLoadFactor"] = new_df["WeekendLoadFactor"]
+    new_df["SundayLoadFactor"]   = new_df["WeekendLoadFactor"]
+    new_df = new_df.drop(columns=["WeekendLoadFactor"])
+
+    out_path = project_root / "inputs" / "load factor patterns" / f"{output_name}.csv"
+    new_df.to_csv(out_path, index=False)
+    print(f"  Saved → {out_path}")
+
+    return output_name
 
 
 def prompt_mode():
@@ -158,7 +232,15 @@ def main():
     print("  Load Profile Generator")
     print("=" * WIDTH)
 
-    pattern = prompt_pattern(patterns)
+    pattern = prompt_pattern(patterns, tou_option=True)
+
+    if pattern is None:
+        pattern = run_tou_fit(patterns)
+        if pattern is None:
+            return
+
+    pattern = check_pattern_format(pattern)
+
     mode = prompt_mode()
 
     if mode == "simple":
